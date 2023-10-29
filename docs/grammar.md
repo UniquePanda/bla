@@ -15,11 +15,53 @@ $$
     [\text{Scope}] &\to \{[\text{Stmt}]^*\}\ \\
     [\text{Expr}] &\to
         \begin{cases}
-            \text{SumBinExpr} \\
-            \text{SubBinExpr} \\
-            \text{MulBinExpr} \\
-            \text{DivBinExpr} \\
+            \text{UnExpr} \\
+            \text{BinExpr} \\
             \text{Term} \\
+        \end{cases}
+    \\
+     [\text{UnExpr}] &\to
+        \begin{cases}
+            [\text{PosUnExpr}] \\
+            [\text{NegUnExpr}] \\
+        \end{cases}
+    \\
+    [\text{PosUnExpr}] &\to \text{ '+' } [\text{Expr}] \\
+    [\text{NegUnExpr}] &\to \text{ '-' } [\text{Expr}] \\
+    [\text{BinExpr}] &\to
+        \begin{cases}
+            [\text{SumBinExpr}] \\
+            [\text{SubBinExpr}] \\
+            [\text{MulBinExpr}] \\
+            [\text{DivBinExpr}] \\
+        \end{cases}
+    \\
+    [\text{SumBinExpr}] &\to
+        \begin{cases}
+            [\text{Expr}] \text{ '+' } [\text{Expr}] \\
+            [\text{Expr}] \text{ '+' } [\text{UnExpr}] \\
+            [\text{Expr}] \text{ '+' } [\text{MulBinExpr}] \\
+            [\text{Expr}] \text{ '+' } [\text{DivBinExpr}] \\
+        \end{cases}
+    \\
+    [\text{SubBinExpr}] &\to
+        \begin{cases}
+            [\text{Expr}] \text{ '-' } [\text{Expr}] \\
+            [\text{Expr}] \text{ '-' } [\text{UnExpr}] \\
+            [\text{Expr}] \text{ '-' } [\text{MulBinExpr}] \\
+            [\text{Expr}] \text{ '-' } [\text{DivBinExpr}] \\
+        \end{cases}
+    \\
+    [\text{MulBinExpr}] &\to
+        \begin{cases}
+            [\text{Expr}] \text{ '*' } [\text{Expr}] \\
+            [\text{Expr}] \text{ '*' } [\text{UnExpr}] \\
+        \end{cases}
+    \\
+    [\text{DivBinExpr}] &\to
+        \begin{cases}
+            [\text{Expr}] \text{ '/' } [\text{Expr}] \\
+            [\text{Expr}] \text{ '/' } [\text{UnExpr}] \\
         \end{cases}
     \\
     [\text{Term}] &\to
@@ -32,27 +74,11 @@ $$
             \text{'('} \ [\text{Expr}] \ \text{')'} \\
         \end{cases}
     \\
-    [\text{SumBinExpr}] &\to
-        \begin{cases}
-            [\text{Expr}] \text{ '+' } [\text{Expr}] \\
-            [\text{Expr}] \text{ '+' } [\text{MulBinExpr}] \\
-            [\text{Expr}] \text{ '+' } [\text{DivBinExpr}] \\
-        \end{cases}
-    \\
-    [\text{SubBinExpr}] &\to
-        \begin{cases}
-            [\text{Expr}] \text{ '-' } [\text{Expr}] \\
-            [\text{Expr}] \text{ '-' } [\text{MulBinExpr}] \\
-            [\text{Expr}] \text{ '-' } [\text{DivBinExpr}] \\
-        \end{cases}
-    \\
-    [\text{MulBinExpr}] &\to [\text{Expr}] \text{ '*' } [\text{Expr}] \\
-    [\text{DivBinExpr}] &\to [\text{Expr}] \text{ '/' } [\text{Expr}] \\
     [\text{BuiltInFunc}] &\to
         \begin{cases}
-            \text{exit} & \text{Exit program with given exit code} \\
-            \text{print} & \text{Print given input to stdout} \\
-            \text{println} & \text{Print given input with added line break to stdout} \\
+            \text{exit'('int\_lit')'} & \text{Exit program with given exit code} \\
+            \text{print'('[Expr]')'} & \text{Print given input to stdout} \\
+            \text{println'('[Expr]')'} & \text{Print given input with added line break to stdout} \\
         \end{cases}
     \\
 \end{align}

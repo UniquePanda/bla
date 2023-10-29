@@ -63,8 +63,13 @@ struct BinExprNode {
     std::variant<SumBinExprNode*, SubBinExprNode*, MulBinExprNode*, DivBinExprNode*> var;
 };
 
+struct UnExprNode {
+    TermNode* term;
+    std::vector<Token> operators;
+};
+
 struct ExprNode {
-    std::variant<TermNode*, BinExprNode*> var;
+    std::variant<TermNode*, UnExprNode*, BinExprNode*> var;
 };
 
 struct StmtNode;
@@ -239,26 +244,45 @@ public:
     std::optional<ExprNode*> parseExpr(int minPrecedence = 0) {
         consumeLineBreaks();
 
-        std::optional<TermNode*> lhsTerm = parseTerm();
+        auto expr = m_allocator.alloc<ExprNode>();
+        std::vector<Token> unaryOperators = {};
 
+        int unOperatorPrecedence = unaryOperatorPrecedence(peek().value().type);
+
+        while (unOperatorPrecedence < MAX_PRECEDENCE && unOperatorPrecedence >= minPrecedence) {
+            unaryOperators.push_back(consume());
+            consumeLineBreaks();
+            unOperatorPrecedence = unaryOperatorPrecedence(peek().value().type);
+        }
+        bool hasUnaryOperators = unaryOperators.size() > 0;
+
+        std::optional<TermNode*> lhsTerm = parseTerm();
         if (!lhsTerm.has_value()) {
-            return {};
+            if (hasUnaryOperators) {
+                failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), m_lineNumber);
+            } else {
+                return {};
+            }
+        }
+
+        if (hasUnaryOperators && std::holds_alternative<StrLitTermNode*>(lhsTerm.value()->var)) {
+            failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), m_lineNumber);
+        }
+
+        if (hasUnaryOperators) {
+            auto unExpr = m_allocator.alloc<UnExprNode>();
+            unExpr->operators = unaryOperators;
+            unExpr->term = lhsTerm.value();
+            expr->var = unExpr;
+        } else {
+            expr->var = lhsTerm.value();
         }
 
         consumeLineBreaks();
 
-        auto expr = m_allocator.alloc<ExprNode>();
-        expr->var = lhsTerm.value();
-
-        while (true) {
-            std::optional<Token> currentToken = peek();
-
-            if (!peek().has_value()) {
-                break;
-            }
-
-            int operatorPrecedence = binaryOperatorPrecedence(peek().value().type);
-            if (operatorPrecedence < minPrecedence || operatorPrecedence >= MAX_PRECEDENCE) {
+        while (peek().has_value()) {
+            int binOperatorPrecedence = binaryOperatorPrecedence(peek().value().type);
+            if (binOperatorPrecedence < minPrecedence || binOperatorPrecedence >= MAX_PRECEDENCE) {
                 break;
             }
 
@@ -555,7 +579,7 @@ public:
     }
 
 private:
-    static const int MAX_PRECEDENCE = 2;
+    static const int MAX_PRECEDENCE = 3;
 
     [[nodiscard]] std::optional<Token> peek(int offset = 0) const {
         if (m_index + offset >= m_tokens.size()) {
@@ -584,6 +608,17 @@ private:
         while (peek().value().type == TokenType::line_break) {
             m_lineNumber++;
             consume();
+        }
+    }
+
+    int unaryOperatorPrecedence(TokenType operatorType) {
+        switch (operatorType) {
+            case TokenType::plus:
+            case TokenType::minus:
+                return 2;
+
+            default:
+                return MAX_PRECEDENCE;
         }
     }
 
