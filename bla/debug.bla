@@ -1,0 +1,24 @@
+// works already :)
+// println(-3);
+// println(-3.0 * 0.5);
+// let x = -2;
+// println(x);
+// println(x * +3);
+// println(x * -3);
+// println(x * 0.5);
+// println(+true);
+// println(+false);
+
+let b = "abc";
+println(b);
+
+// doesn't work yet
+let y = 4;
+println(-y);
+
+let z = 3 * -(4 - 1);
+println(z);
+
+// a bug ("unknown data type"):
+// let bug = (2 * 5);
+// println(bug);

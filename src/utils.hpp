@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <string>
+#include <optional>
 
 enum class TokenType {
     unknown, line_break,
@@ -10,6 +11,35 @@ enum class TokenType {
     eq, open_paren, close_paren, open_curly, close_curly, semi, quot,
     plus, minus, star, slash
 };
+
+struct Token {
+    TokenType type;
+    std::optional<std::string> value {};
+};
+
+std::string negUnOperatorCondensed(std::vector<Token> unaryOperators) {
+    int minusCount = 0;
+    for (const Token unOperator : unaryOperators) {
+        if (unOperator.type == TokenType::minus) {
+            minusCount++;
+        }
+    }
+
+    return minusCount % 2 == 0 ? "" : "-";
+}
+
+std::string unOpSymbol(TokenType unaryOperatorType) {
+    switch (unaryOperatorType) {
+        case TokenType::plus:
+            return "+";
+
+        case TokenType::minus:
+            return "-";
+
+        default:
+            return "";
+    }
+}
 
 void fail(const std::string& msg, const size_t& lineNumber) {
     std::cerr << "Line " << lineNumber << ": " << msg << std::endl;
@@ -58,6 +88,10 @@ void failMissingOperator(const std::string& detail, const size_t& lineNumber) {
 
 void failMissingStmt(const std::string& stmtName, const size_t& lineNumber) {
     fail("Missing statement" + (stmtName == "" ? "" : ": " + stmtName), lineNumber);
+}
+
+void failUexpectedUnaryOperator(const std::string& op, const size_t& lineNumber) {
+    fail("Unexpected unary operator: " + op, lineNumber);
 }
 
 void failUnsupportedBinaryOperator(const size_t& lineNumber) {
