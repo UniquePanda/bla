@@ -8,13 +8,18 @@
 // println(x * 0.5);
 // println(+true);
 // println(+false);
+// let y = 4.0;
+// println(-y);
 
 let b = "abc";
 println(b);
 
 // doesn't work yet
-let y = 4;
-println(-y);
+let y2 = 4;
+println(-y2);
+
+let y3 = 3 + y2;
+println(-y3);
 
 let z = 3 * -(4 - 1);
 println(z);

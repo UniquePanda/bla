@@ -13,30 +13,29 @@ class Generator {
 public:
     Generator(ProgNode prog) : m_prog(std::move(prog)) {}
 
-    // todo: add handling of other unary operators besides + and -
     void generateTerm(const TermNode* term, const std::vector<Token> unaryOperators = {}) {
         struct TermVisitor {
             Generator& generator;
             const std::vector<Token>& unaryOperators;
 
             void operator()(const IntLitTermNode* intLitTerm) const {
-                std::string negOperatorString = negUnOperatorCondensed(unaryOperators);
-                generator.m_codeSectionAsmOutput << "    mov rax, " << negOperatorString << intLitTerm->int_lit.value.value() << "\n";
+                std::string valueString = negUnOperatorCondensed(unaryOperators) + intLitTerm->int_lit.value.value();
+                generator.m_codeSectionAsmOutput << "    mov rax, " << valueString << "\n";
                 generator.pushInternalIntVar("rax");
             }
 
             void operator()(const DblLitTermNode* dblLitTerm) const {
-                std::string negOperatorString = negUnOperatorCondensed(unaryOperators);
-                auto dataLoc = addDoubleToDataSection(std::stod(negOperatorString + dblLitTerm->dbl_lit.value.value()));
+                std::string valueString = negUnOperatorCondensed(unaryOperators) + dblLitTerm->dbl_lit.value.value();
+                auto dataLoc = addDoubleToDataSection(std::stod(valueString));
 
                 generator.m_codeSectionAsmOutput << "    mov rax, dbl" << dataLoc << "\n";
                 generator.pushConst(
                     "rax",
                     generator.internalConstIdent(dataLoc, "DBL"),
                     false,
-                    dataLoc,
                     TokenType::dbl_lit,
-                    dblLitTerm->dbl_lit.value.value().length() + negOperatorString.length()
+                    dataLoc,
+                    valueString
                 );
             }
 
@@ -52,9 +51,9 @@ public:
                     "rax",
                     generator.internalConstIdent(dataLoc, "STRING"),
                     false,
-                    dataLoc,
                     TokenType::str_lit,
-                    strLitTerm->str_lit.value.value().length()
+                    dataLoc,
+                    strLitTerm->str_lit.value.value()
                 );
             }
 
@@ -68,8 +67,8 @@ public:
                     }
                 }
 
-                std::string negOperatorString = hasUnPlusMinus ? negUnOperatorCondensed(unaryOperators) : "";
-                generator.m_codeSectionAsmOutput << "    mov rax, " << negOperatorString << (boolLitTerm->bool_lit.value.value() == "true" ? 1 : 0) << "\n";
+                std::string valueString = (hasUnPlusMinus ? negUnOperatorCondensed(unaryOperators) : "") + (boolLitTerm->bool_lit.value.value() == "true" ? "1" : "0");
+                generator.m_codeSectionAsmOutput << "    mov rax, " << valueString << "\n";
 
                 if (hasUnPlusMinus) {
                     generator.pushInternalIntVar("rax");
@@ -85,7 +84,6 @@ public:
                     failUndeclaredIdentifer(identName, generator.m_lineNumber);
                 }
 
-                // todo: handle + and - unary oeprators
                 if (isConst) {
                     const auto& cons = generator.m_consts.at(identName);
                     std::string typeIdent = "";
@@ -99,8 +97,24 @@ public:
                         typeIdent = "dbl";
                     }
 
-                    generator.m_codeSectionAsmOutput << "    mov rax, " << typeIdent << cons.dataLoc << "\n";
-                    generator.pushConst("rax", identName, true);
+                    if (cons.type == TokenType::dbl_lit && negUnOperatorCondensed(unaryOperators) == "-") {
+                        // Store negated value of the double.
+                        std::string valueString = "-" + generator.m_consts.at(identName).valueAtDataLoc;
+                        auto dataLoc = addDoubleToDataSection(std::stod(valueString));
+
+                        generator.m_codeSectionAsmOutput << "    mov rax, dbl" << dataLoc << "\n";
+                        generator.pushConst(
+                            "rax",
+                            generator.internalConstIdent(dataLoc, "DBL"),
+                            false,
+                            TokenType::dbl_lit,
+                            dataLoc,
+                            valueString
+                        );
+                    } else {
+                        generator.m_codeSectionAsmOutput << "    mov rax, " << typeIdent << cons.dataLoc << "\n";
+                        generator.pushConst("rax", identName, true);
+                    }
                 } else {
                     const auto& var = generator.m_vars.at(identName);
 
@@ -440,6 +454,7 @@ public:
                 // TODO: The "std::holds_alternative" stuff below seems quite hacky, but oh well :D
                 TokenType tokenType = {};
                 size_t valueLength = 0;
+                std::string constValue = "";
 
                 std::string ident = letStmt->ident.value.value();
                 auto expr = letStmt->expr;
@@ -475,18 +490,21 @@ public:
                         }
 
                         tokenType = TokenType::str_lit;
-                        valueLength = std::get<StrLitTermNode*>(term->var)->str_lit.value->length();
+                        constValue = std::get<StrLitTermNode*>(term->var)->str_lit.value.value();
+                        valueLength = constValue.length();
                     } else if (std::holds_alternative<BoolLitTermNode*>(term->var)) {
                         tokenType = TokenType::bool_lit;
                     } else if (std::holds_alternative<IntLitTermNode*>(term->var)) {
                         tokenType = TokenType::int_lit;
                     } else if (std::holds_alternative<DblLitTermNode*>(term->var)) {
                         tokenType = TokenType::dbl_lit;
-                        valueLength = std::get<DblLitTermNode*>(term->var)->dbl_lit.value->length();
+                        std::string negUnCondensed = negUnOperatorCondensed(unaryOperators);
+                        constValue = negUnCondensed + std::get<DblLitTermNode*>(term->var)->dbl_lit.value.value();
+                        valueLength = constValue.length();
                     }
 
                     if (tokenType == TokenType::str_lit || tokenType == TokenType::dbl_lit) {
-                        generator.m_consts.insert({ ident, Const { .dataLoc = generator.m_dataSize, .type = tokenType, .valueLength = valueLength + negUnOperatorCondensed(unaryOperators).length() } });
+                        generator.m_consts.insert({ ident, Const { .dataLoc = generator.m_dataSize, .valueAtDataLoc = constValue, .type = tokenType, .valueLength = valueLength } });
                     } else {
                         generator.m_vars.insert({ ident, Var { .stackLoc = generator.m_stackSize, .type = tokenType } });
                         generator.m_varsInOrder.push_back(ident);
@@ -633,6 +651,8 @@ public:
     }
 
 private:
+// todo: pass in if it is a value, pas in un operators -> then add "-" if value is passed or add "neg <register>" if register is passed
+// todo: for double register maybe negate value before pushing and then negate again to restore?
     void pushVar(
         const std::string& regOrValue,
         const std::string& identName = "",
@@ -706,14 +726,14 @@ private:
         const std::string& reg,
         const std::string& identName = "",
         const bool& alreadyExists = false,
-        const size_t& dataLoc = 0,
         const TokenType& type = {},
-        const size_t& valueLength = 0
+        const size_t& dataLoc = 0,
+        const std::string& valueAtDataLoc = ""
     ) {
         m_werePushesDouble.push_back(false); // Pushing a double const to stack means pushing its memory address, so the pushed value itself is not a double.
 
         if (!alreadyExists) {
-            m_consts.insert({ identName, Const { .dataLoc = dataLoc, .type = type, .valueLength = valueLength } });
+            m_consts.insert({ identName, Const { .dataLoc = dataLoc, .valueAtDataLoc = valueAtDataLoc, .type = type, .valueLength = valueAtDataLoc.length() } });
         }
 
         m_constsOnStack.insert({ m_stackSize, identName });
@@ -1078,6 +1098,7 @@ private:
 
     struct Const {
         size_t dataLoc;
+        std::string valueAtDataLoc;
         TokenType type;
         size_t valueLength = 0;
     };
