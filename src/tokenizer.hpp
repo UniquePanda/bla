@@ -6,11 +6,6 @@
 
 #include "./utils.hpp"
 
-struct Token {
-    TokenType type;
-    std::optional<std::string> value {};
-};
-
 const std::vector<std::string> BUILT_IN_FUNC_NAMES {"print", "println", "exit"};
 
 class Tokenizer {

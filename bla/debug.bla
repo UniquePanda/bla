@@ -1,0 +1,41 @@
+// works already :)
+// println(-3);
+// println(-3.0 * 0.5);
+// let a = -2;
+// println(a);
+// println(a * +3);
+// println(a * -3);
+// println(a * 0.5);
+// println(+true);
+// println(+false);
+// println(-true);
+// println(-false);
+// let b = true;
+// println(-b);
+// println(+b);
+// println(b);
+// let c = 4.0;
+// println(-c);
+// let d = ----5;
+// println(d);
+// let e = 4;
+// println(-e);
+// println(e);
+// let f = 3 + e;
+// println(-f);
+// println(f);
+// let g = 6 + -e;
+// println(-g);
+// println(g);
+
+// doesn't work yet
+let d = 3 * -(4 - 1);
+println(d);
+
+// let h = 4.0 + 1.5;
+// println(-h);
+// println(h + 1.0);
+
+// a bug ("unknown data type"):
+// let bug = (2 * 5);
+// println(bug);

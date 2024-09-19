@@ -13,30 +13,37 @@ class Generator {
 public:
     Generator(ProgNode prog) : m_prog(std::move(prog)) {}
 
-    void generateTerm(const TermNode* term) {
+    void generateTerm(const TermNode* term, const std::vector<Token> unaryOperators = {}) {
         struct TermVisitor {
             Generator& generator;
+            const std::vector<Token>& unaryOperators;
 
             void operator()(const IntLitTermNode* intLitTerm) const {
-                generator.m_codeSectionAsmOutput << "    mov rax, " << intLitTerm->int_lit.value.value() << "\n";
+                std::string valueString = negUnOperatorCondensed(unaryOperators) + intLitTerm->int_lit.value.value();
+                generator.m_codeSectionAsmOutput << "    mov rax, " << valueString << "\n";
                 generator.pushInternalIntVar("rax");
             }
 
             void operator()(const DblLitTermNode* dblLitTerm) const {
-                auto dataLoc = addDoubleToDataSection(std::stod(dblLitTerm->dbl_lit.value.value()));
+                std::string valueString = negUnOperatorCondensed(unaryOperators) + dblLitTerm->dbl_lit.value.value();
+                auto dataLoc = addDoubleToDataSection(std::stod(valueString));
 
                 generator.m_codeSectionAsmOutput << "    mov rax, dbl" << dataLoc << "\n";
                 generator.pushConst(
                     "rax",
                     generator.internalConstIdent(dataLoc, "DBL"),
                     false,
-                    dataLoc,
                     TokenType::dbl_lit,
-                    dblLitTerm->dbl_lit.value.value().length()
+                    dataLoc,
+                    valueString
                 );
             }
 
             void operator()(const StrLitTermNode* strLitTerm) const {
+                if (unaryOperators.size() > 0) {
+                    failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), generator.m_lineNumber);
+                }
+
                 auto dataLoc = addStringToDataSection(strLitTerm->str_lit.value.value());
 
                 generator.m_codeSectionAsmOutput << "    mov rax, string" << dataLoc << "\n";
@@ -44,15 +51,30 @@ public:
                     "rax",
                     generator.internalConstIdent(dataLoc, "STRING"),
                     false,
-                    dataLoc,
                     TokenType::str_lit,
-                    strLitTerm->str_lit.value.value().length()
+                    dataLoc,
+                    strLitTerm->str_lit.value.value()
                 );
             }
 
             void operator()(const BoolLitTermNode* boolLitTerm) const {
-                generator.m_codeSectionAsmOutput << "    mov rax, " << (boolLitTerm->bool_lit.value.value() == "true" ? 1 : 0) << "\n";
-                generator.pushInternalBoolVar("rax");
+                // + and - turn bool into an integer
+                bool hasUnPlusMinus = false;
+                for (Token unOperator : unaryOperators) {
+                    if (unOperator.type == TokenType::plus || unOperator.type == TokenType::minus) {
+                        hasUnPlusMinus = true;
+                        break;
+                    }
+                }
+
+                std::string valueString = (hasUnPlusMinus ? negUnOperatorCondensed(unaryOperators) : "") + (boolLitTerm->bool_lit.value.value() == "true" ? "1" : "0");
+                generator.m_codeSectionAsmOutput << "    mov rax, " << valueString << "\n";
+
+                if (hasUnPlusMinus) {
+                    generator.pushInternalIntVar("rax");
+                } else {
+                    generator.pushInternalBoolVar("rax");
+                }
             }
 
             void operator()(const IdentTermNode* identTerm) const {
@@ -66,24 +88,78 @@ public:
                     const auto& cons = generator.m_consts.at(identName);
                     std::string typeIdent = "";
                     if (cons.type == TokenType::str_lit) {
+                        if (unaryOperators.size() > 0) {
+                            failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), generator.m_lineNumber);
+                        }
+
                         typeIdent = "string";
                     } else if (cons.type == TokenType::dbl_lit) {
                         typeIdent = "dbl";
                     }
 
-                    generator.m_codeSectionAsmOutput << "    mov rax, " << typeIdent << cons.dataLoc << "\n";
-                    generator.pushConst("rax", identName, true);
+                    if (cons.type == TokenType::dbl_lit && negUnOperatorCondensed(unaryOperators) == "-") {
+                        // Store negated value of the double.
+                        std::string valueString = "-" + generator.m_consts.at(identName).valueAtDataLoc;
+                        auto dataLoc = addDoubleToDataSection(std::stod(valueString));
+
+                        generator.m_codeSectionAsmOutput << "    mov rax, dbl" << dataLoc << "\n";
+                        generator.pushConst(
+                            "rax",
+                            generator.internalConstIdent(dataLoc, "DBL"),
+                            false,
+                            TokenType::dbl_lit,
+                            dataLoc,
+                            valueString
+                        );
+                    } else {
+                        generator.m_codeSectionAsmOutput << "    mov rax, " << typeIdent << cons.dataLoc << "\n";
+                        generator.pushConst("rax", identName, true);
+                    }
                 } else {
                     const auto& var = generator.m_vars.at(identName);
-                    std::stringstream offset;
+
+                    if (var.type == TokenType::str_lit && unaryOperators.size() > 0) {
+                        failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), generator.m_lineNumber);
+                    }
+
+                    bool hasUnPlusMinus = false;
+                    for (Token unOperator : unaryOperators) {
+                        if (unOperator.type == TokenType::plus || unOperator.type == TokenType::minus) {
+                            hasUnPlusMinus = true;
+                            break;
+                        }
+                    }
+
+                    bool isNegated = negUnOperatorCondensed(unaryOperators) == "-";
+
+                    std::stringstream stackLocation;
                     const int typeSizeInQwords = var.type == TokenType::dbl_lit ? 2 : 1; // 1 QWord = 1 Stack line
-                    offset << "QWORD [rsp + " << (generator.m_stackSize - var.stackLoc - typeSizeInQwords) * 8 << "]";
-                    generator.pushVar(offset.str(), identName, true);
+                    stackLocation << "QWORD [rsp + " << (generator.m_stackSize - var.stackLoc - typeSizeInQwords) * 8 << "]";
+
+                    if (isNegated) {
+                        if (var.type == TokenType::int_lit || var.type == TokenType::bool_lit) {
+                            generator.m_codeSectionAsmOutput << "    mov rax, " << stackLocation.str() << "\n";
+                            generator.m_codeSectionAsmOutput << "    neg rax" << "\n";
+                            generator.pushInternalIntVar("rax");
+                        } else if (var.type == TokenType::dbl_lit) {
+                            generator.m_codeSectionAsmOutput << "    movq xmm0, " << stackLocation.str() << "\n";
+                            generator.m_codeSectionAsmOutput << "    movq xmm1, [FLIP_S_64B]\n";
+                            generator.m_codeSectionAsmOutput << "    xorps xmm0, xmm1\n";
+                            generator.pushInternalDblVar("xmm0");
+                        } else {
+                            failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), generator.m_lineNumber);
+                        }
+                    } else if (hasUnPlusMinus && var.type == TokenType::bool_lit) {
+                        generator.m_codeSectionAsmOutput << "    mov rax, " << stackLocation.str() << "\n";
+                        generator.pushInternalIntVar("rax");
+                    } else {
+                        generator.pushVar(stackLocation.str(), identName, true);
+                    }
                 }
             }
 
             void operator()(const ParenTermNode* parenTerm) const {
-                generator.generateExpr(parenTerm->expr);
+                generator.generateExpr(parenTerm->expr, unaryOperators);
             }
 
             size_t addStringToDataSection(std::string str) const {
@@ -119,11 +195,11 @@ public:
             }
         };
 
-        TermVisitor visitor({ .generator = *this });
+        TermVisitor visitor({ .generator = *this, .unaryOperators = unaryOperators });
         std::visit(visitor, term->var);
     }
 
-    void generateExpr(const ExprNode* expr) {
+    void generateExpr(const ExprNode* expr, const std::vector<Token> unaryOperators = {}) {
         struct BinExprVisitor {
             Generator& generator;
 
@@ -264,6 +340,10 @@ public:
                 BinExprVisitor visitor({.generator = generator});
                 std::visit(visitor, binExpr->var);
             }
+
+            void operator()(const UnExprNode* unExpr) const {
+                generator.generateTerm(unExpr->term, unExpr->operators);
+            }
         };
 
         ExprVisitor visitor({.generator = *this});
@@ -402,6 +482,7 @@ public:
                 // TODO: The "std::holds_alternative" stuff below seems quite hacky, but oh well :D
                 TokenType tokenType = {};
                 size_t valueLength = 0;
+                std::string constValue = "";
 
                 std::string ident = letStmt->ident.value.value();
                 auto expr = letStmt->expr;
@@ -419,23 +500,39 @@ public:
                     }
                 }
 
-                if (std::holds_alternative<TermNode*>(expr->var)) {
-                    auto term = std::get<TermNode*>(expr->var);
+                if (std::holds_alternative<TermNode*>(expr->var) || std::holds_alternative<UnExprNode*>(expr->var)) {
+                    TermNode* term;
+                    std::vector<Token> unaryOperators = {};
+
+                    if (std::holds_alternative<TermNode*>(expr->var)) {
+                        term = std::get<TermNode*>(expr->var);
+                    } else {
+                        auto unExpr = std::get<UnExprNode*>(expr->var);
+                        term = unExpr->term;
+                        unaryOperators = unExpr->operators;
+                    }
 
                     if (std::holds_alternative<StrLitTermNode*>(term->var)) {
+                        if (unaryOperators.size() > 0) {
+                            failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), generator.m_lineNumber);
+                        }
+
                         tokenType = TokenType::str_lit;
-                        valueLength = std::get<StrLitTermNode*>(term->var)->str_lit.value->length();
+                        constValue = std::get<StrLitTermNode*>(term->var)->str_lit.value.value();
+                        valueLength = constValue.length();
                     } else if (std::holds_alternative<BoolLitTermNode*>(term->var)) {
                         tokenType = TokenType::bool_lit;
                     } else if (std::holds_alternative<IntLitTermNode*>(term->var)) {
                         tokenType = TokenType::int_lit;
                     } else if (std::holds_alternative<DblLitTermNode*>(term->var)) {
                         tokenType = TokenType::dbl_lit;
-                        valueLength = std::get<DblLitTermNode*>(term->var)->dbl_lit.value->length();
+                        std::string negUnCondensed = negUnOperatorCondensed(unaryOperators);
+                        constValue = negUnCondensed + std::get<DblLitTermNode*>(term->var)->dbl_lit.value.value();
+                        valueLength = constValue.length();
                     }
 
                     if (tokenType == TokenType::str_lit || tokenType == TokenType::dbl_lit) {
-                        generator.m_consts.insert({ ident, Const { .dataLoc = generator.m_dataSize, .type = tokenType, .valueLength = valueLength } });
+                        generator.m_consts.insert({ ident, Const { .dataLoc = generator.m_dataSize, .valueAtDataLoc = constValue, .type = tokenType, .valueLength = valueLength } });
                     } else {
                         generator.m_vars.insert({ ident, Var { .stackLoc = generator.m_stackSize, .type = tokenType } });
                         generator.m_varsInOrder.push_back(ident);
@@ -655,14 +752,14 @@ private:
         const std::string& reg,
         const std::string& identName = "",
         const bool& alreadyExists = false,
-        const size_t& dataLoc = 0,
         const TokenType& type = {},
-        const size_t& valueLength = 0
+        const size_t& dataLoc = 0,
+        const std::string& valueAtDataLoc = ""
     ) {
         m_werePushesDouble.push_back(false); // Pushing a double const to stack means pushing its memory address, so the pushed value itself is not a double.
 
         if (!alreadyExists) {
-            m_consts.insert({ identName, Const { .dataLoc = dataLoc, .type = type, .valueLength = valueLength } });
+            m_consts.insert({ identName, Const { .dataLoc = dataLoc, .valueAtDataLoc = valueAtDataLoc, .type = type, .valueLength = valueAtDataLoc.length() } });
         }
 
         m_constsOnStack.insert({ m_stackSize, identName });
@@ -1027,6 +1124,7 @@ private:
 
     struct Const {
         size_t dataLoc;
+        std::string valueAtDataLoc;
         TokenType type;
         size_t valueLength = 0;
     };
