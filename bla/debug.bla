@@ -1,2 +1,9 @@
 // add any Blast code that needs debugging
 
+let a = 1.0 + 2.0;
+let b = 2.0;
+a = 2.0 * 4.0;
+b = a;
+let c = b;
+
+println(c); // not working!

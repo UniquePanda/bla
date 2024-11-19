@@ -907,35 +907,34 @@ private:
             unaryOperators = unExpr->operators;
         }
 
+        TokenType producedTokenType = {};
+
         // If the term is referencing another identifier, we need to copy what the other identifier is pointing to
         // and then let the new identifier point to that copy.
-        // todo: that's basically the same code as in `generateTerm` for an `IdentTermNode`.
         if (std::holds_alternative<IdentTermNode*>(term->var)) {
-            auto origIdentTerm = std::get<IdentTermNode*>(term->var);
-            auto origIdent = origIdentTerm->ident.value.value();
-            bool isConst = m_consts.contains(origIdent);
+            auto referencedIdentTerm = std::get<IdentTermNode*>(term->var);
+            auto referencedIdent = referencedIdentTerm->ident.value.value();
+            bool isReferencedConst = m_consts.contains(referencedIdent);
 
-            if (!isConst && !m_vars.contains(origIdent)) {
-                failUndeclaredIdentifer(origIdent, m_lineNumber);
+            if (!isReferencedConst && !m_vars.contains(referencedIdent)) {
+                failUndeclaredIdentifer(referencedIdent, m_lineNumber);
             }
 
-            if (isConst) {
-                const auto& cons = m_consts.at(origIdent);
-                std::string typeIdent = "";
-                if (cons.type == TokenType::str_lit) {
-                    if (unaryOperators.size() > 0) {
-                        failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), m_lineNumber);
-                    }
+            if (isReferencedConst) {
+                const auto& referencedConst = m_consts.at(referencedIdent);
 
-                    typeIdent = "string";
-                } else if (cons.type == TokenType::dbl_lit) {
-                    typeIdent = "dbl";
+                if (referencedConst.type == TokenType::str_lit && unaryOperators.size() > 0) {
+                    failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), m_lineNumber);
                 }
 
-                if (cons.type == TokenType::dbl_lit && negUnOperatorCondensed(unaryOperators) == "-") {
+                size_t dataLoc = -1;
+                std::string referencedTypeDataIdent = referencedConst.type == TokenType::dbl_lit ? "dbl" : "string";
+                std::string valueAtDataLoc = "";
+
+                if (referencedConst.type == TokenType::dbl_lit && negUnOperatorCondensed(unaryOperators) == "-") {
                     // Store negated value of the double.
-                    std::string valueString = "-" + m_consts.at(origIdent).valueAtDataLoc;
-                    auto dataLoc = addDoubleToDataSection(std::stod(valueString));
+                    valueAtDataLoc = "-" + m_consts.at(referencedIdent).valueAtDataLoc;
+                    dataLoc = addDoubleToDataSection(std::stod(valueAtDataLoc));
 
                     m_codeSectionAsmOutput << "    mov rax, dbl" << dataLoc << "\n";
                     pushConst(
@@ -943,18 +942,26 @@ private:
                         internalConstIdent(dataLoc, "DBL"),
                         TokenType::dbl_lit,
                         dataLoc,
-                        valueString
+                        valueAtDataLoc
                     );
                 } else {
-                    m_codeSectionAsmOutput << "    mov rax, " << typeIdent << cons.dataLoc << "\n";
-                    pushConst("rax", ident, cons.type, cons.dataLoc, cons.valueAtDataLoc);
-                }
-            } else {
-                const auto& var = m_vars.at(origIdent);
+                    dataLoc = referencedConst.dataLoc;
+                    valueAtDataLoc = referencedConst.valueAtDataLoc;
 
-                if (var.type == TokenType::str_lit && unaryOperators.size() > 0) {
-                    failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), m_lineNumber);
+                    m_codeSectionAsmOutput << "    mov rax, " << referencedTypeDataIdent << dataLoc << "\n";
+                    pushConst("rax", ident, referencedConst.type, dataLoc, valueAtDataLoc);
                 }
+
+                if (isReassignment) {
+                    Const* reassignedCons = &m_consts.at(ident);
+                    reassignedCons->dataLoc = dataLoc;
+                    reassignedCons->valueAtDataLoc = valueAtDataLoc;
+                    reassignedCons->valueLength = valueAtDataLoc.length();
+                }
+
+                producedTokenType = referencedConst.type;
+            } else {
+                const auto& referencedVar = m_vars.at(referencedIdent);
 
                 bool hasUnPlusMinus = false;
                 for (Token unOperator : unaryOperators) {
@@ -967,14 +974,14 @@ private:
                 bool isNegated = negUnOperatorCondensed(unaryOperators) == "-";
 
                 std::stringstream stackLocation;
-                stackLocation << "QWORD [rsp + " << (m_stackSize - var.stackLoc - 1) * 8 << "]";
+                stackLocation << "QWORD [rsp + " << (m_stackSize - referencedVar.stackLoc - 1) * 8 << "]";
 
                 if (isNegated) {
-                    if (var.type == TokenType::int_lit || var.type == TokenType::bool_lit) {
+                    if (referencedVar.type == TokenType::int_lit || referencedVar.type == TokenType::bool_lit) {
                         m_codeSectionAsmOutput << "    mov rax, " << stackLocation.str() << "\n";
                         m_codeSectionAsmOutput << "    neg rax" << "\n";
                         pushInternalIntVar("rax");
-                    } else if (var.type == TokenType::dbl_lit) {
+                    } else if (referencedVar.type == TokenType::dbl_lit) {
                         m_codeSectionAsmOutput << "    movq xmm0, " << stackLocation.str() << "\n";
                         m_codeSectionAsmOutput << "    movq xmm1, [FLIP_S_64B]\n";
                         m_codeSectionAsmOutput << "    xorps xmm0, xmm1\n";
@@ -982,55 +989,56 @@ private:
                     } else {
                         failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), m_lineNumber);
                     }
-                } else if (hasUnPlusMinus && var.type == TokenType::bool_lit) {
+                } else if (hasUnPlusMinus && referencedVar.type == TokenType::bool_lit) {
                     m_codeSectionAsmOutput << "    mov rax, " << stackLocation.str() << "\n";
                     pushInternalIntVar("rax");
                 } else {
-                    pushVar(stackLocation.str(), ident, var.type);
+                    m_codeSectionAsmOutput << "    mov rax, " << stackLocation.str() << "\n";
+                    pushVar("rax", ident, referencedVar.type);
                 }
+
+                producedTokenType = referencedVar.type;
+            }
+        } else { // term does not reference another identifier
+            size_t valueLength = 0;
+            std::string constValue = "";
+            if (std::holds_alternative<StrLitTermNode*>(term->var)) {
+                if (unaryOperators.size() > 0) {
+                    failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), m_lineNumber);
+                }
+
+                tokenType = TokenType::str_lit;
+                constValue = std::get<StrLitTermNode*>(term->var)->str_lit.value.value();
+                valueLength = constValue.length();
+            } else if (std::holds_alternative<BoolLitTermNode*>(term->var)) {
+                tokenType = TokenType::bool_lit;
+            } else if (std::holds_alternative<IntLitTermNode*>(term->var)) {
+                tokenType = TokenType::int_lit;
+            } else if (std::holds_alternative<DblLitTermNode*>(term->var)) {
+                tokenType = TokenType::dbl_lit;
+                std::string negUnCondensed = negUnOperatorCondensed(unaryOperators);
+                constValue = negUnCondensed + std::get<DblLitTermNode*>(term->var)->dbl_lit.value.value();
+                valueLength = constValue.length();
             }
 
-            return;
-        }
-
-        size_t valueLength = 0;
-        std::string constValue = "";
-        if (std::holds_alternative<StrLitTermNode*>(term->var)) {
-            if (unaryOperators.size() > 0) {
-                failUexpectedUnaryOperator(unOpSymbol(unaryOperators.back().type), m_lineNumber);
+            if (tokenType == TokenType::str_lit || tokenType == TokenType::dbl_lit) {
+                if (isReassignment) {
+                    Const* reassignedCons = &m_consts.at(ident);
+                    reassignedCons->dataLoc = m_dataSize;
+                    reassignedCons->valueAtDataLoc = constValue;
+                    reassignedCons->valueLength = valueLength;
+                } else {
+                    m_consts.insert({ ident, Const { .dataLoc = m_dataSize, .stackLoc = m_stackSize, .valueAtDataLoc = constValue, .type = tokenType, .valueLength = valueLength } });
+                }
+            } else if (!isReassignment) {
+                // Vars only need to be updated if this is a new assignment, because they only hold stack location and
+                // token type, which don't change in a reassignment.
+                m_vars.insert({ ident, Var { .stackLoc = m_stackSize, .type = tokenType } });
+                addToOrderedVarsIfNew(ident);
             }
 
-            tokenType = TokenType::str_lit;
-            constValue = std::get<StrLitTermNode*>(term->var)->str_lit.value.value();
-            valueLength = constValue.length();
-        } else if (std::holds_alternative<BoolLitTermNode*>(term->var)) {
-            tokenType = TokenType::bool_lit;
-        } else if (std::holds_alternative<IntLitTermNode*>(term->var)) {
-            tokenType = TokenType::int_lit;
-        } else if (std::holds_alternative<DblLitTermNode*>(term->var)) {
-            tokenType = TokenType::dbl_lit;
-            std::string negUnCondensed = negUnOperatorCondensed(unaryOperators);
-            constValue = negUnCondensed + std::get<DblLitTermNode*>(term->var)->dbl_lit.value.value();
-            valueLength = constValue.length();
+            producedTokenType = generateExpr(expr,{}, isReassignment);
         }
-
-        if (tokenType == TokenType::str_lit || tokenType == TokenType::dbl_lit) {
-            if (isReassignment) {
-                Const* reassignedCons = &m_consts.at(ident);
-                reassignedCons->dataLoc = m_dataSize;
-                reassignedCons->valueAtDataLoc = constValue;
-                reassignedCons->valueLength = valueLength;
-            } else {
-                m_consts.insert({ ident, Const { .dataLoc = m_dataSize, .stackLoc = m_stackSize, .valueAtDataLoc = constValue, .type = tokenType, .valueLength = valueLength } });
-            }
-        } else if (!isReassignment) {
-            // Vars only need to be updated if this is a new assignment, because they only hild stack location and
-            // token type, which don't change in a reassignment.
-            m_vars.insert({ ident, Var { .stackLoc = m_stackSize, .type = tokenType } });
-            addToOrderedVarsIfNew(ident);
-        }
-
-        TokenType producedTokenType = generateExpr(expr,{}, isReassignment);
 
         if (!isReassignment) {
             return;
@@ -1048,15 +1056,13 @@ private:
             failInvalidReassignment(tokenTypeName(reassignedTokenType), m_lineNumber);
         }
 
-        if (
-            reassignedTokenType == TokenType::int_lit
-            || reassignedTokenType == TokenType::bool_lit) {
+        if (reassignedTokenType == TokenType::int_lit || reassignedTokenType == TokenType::bool_lit) {
             m_codeSectionAsmOutput << "    add rsp, " << (m_stackSize - m_vars.at(ident).stackLoc - 1) * 8 << "\n";
             m_codeSectionAsmOutput << "    mov [rsp], rax\n";
             m_codeSectionAsmOutput << "    sub rsp, " << (m_stackSize - m_vars.at(ident).stackLoc - 1) * 8 << "\n";
         }
 
-        if (reassignedTokenType == TokenType::dbl_lit) {
+        if (reassignedTokenType == TokenType::dbl_lit || reassignedTokenType == TokenType::str_lit) {
             m_codeSectionAsmOutput << "    add rsp, " << (m_stackSize - m_consts.at(ident).stackLoc - 1) * 8 << "\n";
             m_codeSectionAsmOutput << "    mov [rsp], rax\n";
             m_codeSectionAsmOutput << "    sub rsp, " << (m_stackSize - m_consts.at(ident).stackLoc - 1) * 8 << "\n";
